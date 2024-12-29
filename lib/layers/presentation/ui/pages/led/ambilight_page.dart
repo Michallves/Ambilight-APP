@@ -1,19 +1,15 @@
 import 'dart:async';
 import 'dart:developer';
-import 'dart:typed_data';
-import 'dart:ui';
-import 'package:ambilight_app/core/utils/ambilight_color_processor.dart';
-import 'package:flutter/foundation.dart';
+import 'package:ambilight_app/core/utils/gdi_capture.dart';
+import 'package:ambilight_app/core/utils/image_processor.dart';
 import 'package:flutter/material.dart';
-import 'package:ambilight_app/layers/domain/entities/bluetooth_entity.dart';
+import 'package:ambilight_app/layers/domain/entities/device_entity.dart';
 import 'package:flutter_blue_plus_windows/flutter_blue_plus_windows.dart';
-import 'package:desktop_screenshot/desktop_screenshot.dart';
-import 'package:palette_generator/palette_generator.dart';
 
 class AmbilightPage extends StatefulWidget {
-  final BluetoothEntity bluetoothEntity;
+  final DeviceEntity deviceEntity;
 
-  const AmbilightPage({super.key, required this.bluetoothEntity});
+  const AmbilightPage({super.key, required this.deviceEntity});
 
   @override
   AmbilightPageState createState() => AmbilightPageState();
@@ -21,85 +17,110 @@ class AmbilightPage extends StatefulWidget {
 
 class AmbilightPageState extends State<AmbilightPage> {
   bool isAmbilightOn = false; // Estado do modo Ambilight
-  Timer? _ambilightTimer; // Timer para capturar a tela periodicamente
-  HSVColor _currentColor = HSVColor.fromColor(Colors.black);
-  final DesktopScreenshot _desktopScreenshot = DesktopScreenshot();
-
   final String serviceUuid = "0000ffff-0000-1000-8000-00805f9b34fb";
   final String writeUuid = "0000ff01-0000-1000-8000-00805f9b34fb";
+  HSVColor _currentColor = HSVColor.fromColor(Colors.black);
 
   @override
   void dispose() {
-    _ambilightTimer?.cancel();
     super.dispose();
   }
 
   void _toggleAmbilight() {
     setState(() {
       isAmbilightOn = !isAmbilightOn;
-      isAmbilightOn ? _startAmbilight() : _stopAmbilight();
+      if (isAmbilightOn) {
+        _startAmbilight();
+      } else {
+        _stopAmbilight();
+      }
     });
   }
 
-  void _startAmbilight() async {
+  void _startAmbilight() {
     log("[Ambilight] Modo Ambilight ativado.");
-    for (;;) {
-      if (!isAmbilightOn) break;
-      await _captureAndProcessScreen();
-    }
+    _captureScreenshotsContinuously();
   }
 
   void _stopAmbilight() {
     log("[Ambilight] Modo Ambilight desativado.");
-    _ambilightTimer?.cancel();
-    _ambilightTimer = null;
-
-    setState(() {
-      _currentColor = HSVColor.fromColor(Colors.black);
-    });
-
-    _setColor(_currentColor);
+    isAmbilightOn = false; // Interrompe o loop
   }
 
-  Future<void> _captureAndProcessScreen() async {
-    try {
-      // Captura a tela como Uint8List
-      final screenshot = await _desktopScreenshot.getScreenshot();
+  Future<void> _captureScreenshotsContinuously() async {
+    final capture = GDICapture();
+    final processor = ImageProcessor();
+    int frameCount = 0;
 
-      if (screenshot == null || screenshot.isEmpty) {
-        log("[Ambilight] Falha ao capturar a tela.");
+    // Intervalo mínimo para 30 FPS (1000ms / 30 = ~33ms por quadro)
+    const int frameIntervalMs = 33;
+
+    Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!isAmbilightOn) {
+        timer.cancel();
+        capture.dispose();
         return;
       }
+      log("[Ambilight] FPS atual: $frameCount");
+      frameCount = 0;
+    });
 
-      // Processa a cor ambiente da imagem
-      final colorProcessor = AmbilightColorProcessor();
-      final ambientColor =
-          await colorProcessor.processAmbilightColors(screenshot);
+    while (isAmbilightOn) {
+      final startTime = DateTime.now();
 
-      // Atualiza o estado e envia a cor para a fita LED
-      setState(() {
-        _currentColor = HSVColor.fromColor(ambientColor);
-      });
-      _setColor(_currentColor);
+      try {
+        // Captura a tela
+        final screenshot = capture.captureScreen(width: 800, height: 600);
+        if (screenshot != null) {
+          frameCount++;
+          // Processa a cor ambiente
+          final ambientColor = processor.calculateAmbientColor(
+            screenshot,
+            800,
+            600,
+          );
+          setState(() {
+            _currentColor = ambientColor;
+          });
+          _setColorAsync(_currentColor);
 
-      log("[Ambilight] Cor ambiente processada com sucesso: $ambientColor");
-    } catch (e) {
-      log("[Ambilight] Erro ao capturar ou processar a tela: $e", level: 1000);
+          log("[Ambilight] Cor ambiente calculada: $ambientColor");
+        } else {
+          log("[Ambilight] Falha na captura de tela.");
+        }
+      } catch (e) {
+        log("[Ambilight] Erro na captura: $e");
+      }
+
+      final elapsedTime = DateTime.now().difference(startTime).inMilliseconds;
+
+      // Garante que o intervalo mínimo entre quadros seja respeitado
+      final delay = (frameIntervalMs - elapsedTime).clamp(0, frameIntervalMs);
+      await Future.delayed(Duration(milliseconds: delay));
     }
   }
 
-  Future<HSVColor> processImage(Uint8List screenshot) async {
-    return await compute(_processImage, screenshot);
-  }
-
-  Future<HSVColor> _processImage(Uint8List screenshot) async {
-    final paletteGenerator =
-        await PaletteGenerator.fromImageProvider(MemoryImage(screenshot));
-    final dominantColor = paletteGenerator.dominantColor?.color ?? Colors.black;
-    return HSVColor.fromColor(dominantColor);
+  HSVColor? _lastSentColor;
+  Future<void> _setColorAsync(HSVColor color) async {
+    Future.microtask(() => _setColor(color));
   }
 
   Future<void> _setColor(HSVColor color) async {
+    // Define uma tolerância para mudanças de cor
+    const double hueTolerance = 5.0;
+    const double saturationTolerance = 0.05;
+    const double brightnessTolerance = 0.05;
+
+    // Verifica se a nova cor está dentro da tolerância
+    if (_lastSentColor != null &&
+        (color.hue - _lastSentColor!.hue).abs() < hueTolerance &&
+        (color.saturation - _lastSentColor!.saturation).abs() <
+            saturationTolerance &&
+        (color.value - _lastSentColor!.value).abs() < brightnessTolerance) {
+      log("[Ambilight] Mudança de cor insignificante. Não enviando.");
+      return;
+    }
+
     try {
       log("[Ambilight] Alterando a cor para: $color");
       final packet = _colorToPacket(color);
@@ -110,18 +131,26 @@ class AmbilightPageState extends State<AmbilightPage> {
       }
 
       await writeCharacteristic.write(packet, withoutResponse: true);
+      _lastSentColor = color; // Atualiza a última cor enviada
       log("[Ambilight] Cor enviada com sucesso!");
     } catch (e) {
       log("[Ambilight] Erro ao enviar cor: $e");
     }
   }
 
+  BluetoothCharacteristic? _cachedWriteCharacteristic;
+
   Future<BluetoothCharacteristic?> _findWriteCharacteristic() async {
-    final services = await widget.bluetoothEntity.device.discoverServices();
+    if (_cachedWriteCharacteristic != null) {
+      return _cachedWriteCharacteristic;
+    }
+
+    final services = await widget.deviceEntity.device.discoverServices();
     for (final service in services) {
       if (service.uuid.str128.toString() == serviceUuid) {
         for (final characteristic in service.characteristics) {
           if (characteristic.uuid.str128.toString() == writeUuid) {
+            _cachedWriteCharacteristic = characteristic;
             return characteristic;
           }
         }
@@ -162,49 +191,116 @@ class AmbilightPageState extends State<AmbilightPage> {
 
   @override
   Widget build(BuildContext context) {
+    bool isDesktop = MediaQuery.of(context).size.width > 800;
+    double height = MediaQuery.of(context).size.height;
     return Scaffold(
-      body: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text(
-                'Modo Ambilight',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 50),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: 300,
-                height: 300,
-                decoration: BoxDecoration(
-                  color: _currentColor.toColor(),
-                  shape: BoxShape.circle,
+      appBar: AppBar(
+        title: const Text('Ambilight'),
+      ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(height: isDesktop ? height / 8 : height / 16),
+                const Text(
+                  'Modo Ambilight',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
-              ),
-              const SizedBox(height: 50),
-              IconButton(
-                onPressed: _toggleAmbilight,
-                style: IconButton.styleFrom(
-                  padding: const EdgeInsets.all(20),
-                  backgroundColor: isAmbilightOn ? Colors.green : Colors.red,
-                ),
-                icon: Icon(
-                  Icons.power_settings_new,
-                  color: isAmbilightOn
-                      ? Colors.white
-                      : Theme.of(context).scaffoldBackgroundColor,
-                  size: 100,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                isAmbilightOn ? "Ligado" : "Desligado",
-                style:
-                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-            ],
+                const SizedBox(height: 30),
+                if (isDesktop)
+                  // Layout para desktop: círculo e botão lado a lado
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Círculo colorido
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: 430,
+                        height: 430,
+                        decoration: BoxDecoration(
+                          color: isAmbilightOn
+                              ? _currentColor.toColor()
+                              : Colors.black,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 110),
+                      // Botão de ligar/desligar e texto
+                      Column(
+                        children: [
+                          IconButton(
+                            onPressed: _toggleAmbilight,
+                            style: IconButton.styleFrom(
+                              padding: const EdgeInsets.all(20),
+                              backgroundColor:
+                                  isAmbilightOn ? Colors.green : Colors.red,
+                            ),
+                            icon: Icon(
+                              Icons.power_settings_new,
+                              color: isAmbilightOn
+                                  ? Colors.white
+                                  : Theme.of(context).scaffoldBackgroundColor,
+                              size: 100,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            isAmbilightOn ? "Ligado" : "Desligado",
+                            style: const TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 205),
+                    ],
+                  )
+                else
+                  // Layout para dispositivos móveis: tudo em coluna
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Círculo colorido
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: 330,
+                        height: 330,
+                        decoration: BoxDecoration(
+                          color: isAmbilightOn
+                              ? _currentColor.toColor()
+                              : Colors.black,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+                      // Botão de ligar/desligar e texto
+                      IconButton(
+                        onPressed: _toggleAmbilight,
+                        style: IconButton.styleFrom(
+                          padding: const EdgeInsets.all(20),
+                          backgroundColor:
+                              isAmbilightOn ? Colors.green : Colors.red,
+                        ),
+                        icon: Icon(
+                          Icons.power_settings_new,
+                          color: isAmbilightOn
+                              ? Colors.white
+                              : Theme.of(context).scaffoldBackgroundColor,
+                          size: 80,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        isAmbilightOn ? "Ligado" : "Desligado",
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
         ),
       ),

@@ -38,13 +38,13 @@ dependencies:
   go_router: ^14.6.2
   flutter_blue_plus_windows: ^1.25.0
   provider: ^6.1.2
-  shared_preferences: ^2.3.4
   flutter_colorpicker: ^1.1.0
   convert: ^3.1.2
   image: ^3.0.0
-  desktop_screenshot: ^0.0.4
-  palette_generator: ^0.3.3+5
-  
+  ffi: ^2.0.1
+  get_it: ^8.0.3
+  url_launcher: ^6.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -66,6 +66,8 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/images/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
