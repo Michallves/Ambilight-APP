@@ -1,7 +1,9 @@
-import 'package:ambilight_app/layers/domain/entities/bluetooth_entity.dart';
+import 'package:ambilight_app/layers/domain/entities/device_entity.dart';
 import 'package:ambilight_app/layers/presentation/provider/bluetooth_provider.dart';
 import 'package:ambilight_app/layers/presentation/ui/widgets/bluetooth_widget.dart';
+import 'package:ambilight_app/layers/presentation/ui/widgets/button_header_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
@@ -29,12 +31,17 @@ class _HomePageState extends State<HomePage> {
     return Consumer<BluetoothProvider>(
         builder: (context, bluetoothProvider, child) {
       final bool isBluetoothEnabled = bluetoothProvider.isBluetoothEnabled;
-      final List<BluetoothEntity> bluetoothDevices =
+      final List<DeviceEntity> bluetoothDevices =
           bluetoothProvider.bluetoothDevices;
 
       return Scaffold(
         appBar: AppBar(
           title: const Text('Ambilight App'),
+          actions: [
+            ButtonHeaderWidget(
+                widget: const Icon(Icons.settings),
+                onPressed: () => context.go('/config'))
+          ],
         ),
         body: Column(
           children: [
@@ -74,7 +81,7 @@ class _HomePageState extends State<HomePage> {
                       itemCount: bluetoothDevices.length,
                       itemBuilder: (context, index) {
                         return BluetoothWidget(
-                          bluetoothEntity: bluetoothDevices[index],
+                          deviceEntity: bluetoothDevices[index],
                         );
                       },
                     ),

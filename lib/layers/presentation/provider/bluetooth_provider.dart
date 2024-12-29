@@ -1,12 +1,12 @@
 import 'dart:developer';
-import 'package:ambilight_app/layers/domain/entities/bluetooth_entity.dart';
+import 'package:ambilight_app/layers/domain/entities/device_entity.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus_windows/flutter_blue_plus_windows.dart';
 
 class BluetoothProvider with ChangeNotifier {
   bool isBluetoothEnabled = false;
   bool isScanning = false;
-  final List<BluetoothEntity> bluetoothDevices =
+  List<DeviceEntity> bluetoothDevices =
       []; // Lista de dispositivos Bluetooth válidos
 
   /// Verifica o estado do adaptador Bluetooth.
@@ -44,6 +44,9 @@ class BluetoothProvider with ChangeNotifier {
         isBluetoothEnabled = (state == BluetoothAdapterState.on);
         if (isBluetoothEnabled) {
           startScanning(); // Inicia o escaneamento
+        } else {
+          stopScanning(); // Para o escaneamento
+          bluetoothDevices.clear(); // Limpa a lista de dispositivos
         }
         notifyListeners();
       });
@@ -74,31 +77,9 @@ class BluetoothProvider with ChangeNotifier {
     FlutterBluePlus.startScan();
 
     FlutterBluePlus.scanResults.expand((e) => e).listen((scanResult) async {
-      final entity = BluetoothEntity(scanResult.device);
+      final entity = DeviceEntity(scanResult.device);
 
-      if (entity.isValid) {
-        // Verifica o estado salvo no SharedPreferences
-        final bluetoothIsConnected = scanResult.device.isConnected;
-        final wasConnected = await entity.isConnectedLocalStorage;
-
-        if (wasConnected && !bluetoothIsConnected) {
-          // Conecta automaticamente se estava salvo como conectado
-          try {
-            await entity.connect();
-          } catch (e) {
-            log('Erro ao conectar automaticamente: $e',
-                name: 'BluetoothProvider.startScanning', error: e);
-          }
-        } else if (!wasConnected && bluetoothIsConnected) {
-          // Desconecta se não estava salvo como conectado
-          try {
-            await entity.disconnect();
-          } catch (e) {
-            log('Erro ao desconectar automaticamente: $e',
-                name: 'BluetoothProvider.startScanning', error: e);
-          }
-        }
-
+      if (entity.isCompatible) {
         // Adiciona à lista e notifica mudanças
         if (!bluetoothDevices.any((device) => device.mac == entity.mac)) {
           bluetoothDevices.add(entity);
