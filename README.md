@@ -80,6 +80,12 @@ O formato do pacote para controle de cor é:
 
 ---
 
+## Download
+
+- **Link**: https://ifce367-my.sharepoint.com/:f:/g/personal/l8_460_michael_alves_ad_ifce_edu_br/EjL5lrz-QRROqMouRobhw-cBfUFMnGV6O5cwz3qHW210Lg?e=6yB4Ju
+  
+---
+
 ## Contribuição
 Este é um projeto open-source, e contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou enviar pull requests no repositório.
 
